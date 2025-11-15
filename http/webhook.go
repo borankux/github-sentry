@@ -102,8 +102,16 @@ func WebHook(c *gin.Context) {
 		return
 	}
 
-	// Execute scripts sequentially
-	results, err := executor.ExecuteScripts(cfg.ScriptsFolder)
+	// Execute commands from config
+	var results []executor.ExecutionResult
+	if len(cfg.Commands.Sequential) > 0 || len(cfg.Commands.Async) > 0 {
+		// Use new command-based execution
+		results, err = executor.ExecuteCommands(cfg.Commands.Sequential, cfg.Commands.Async, branch, repoName)
+	} else {
+		// Fallback to old scripts folder method (deprecated)
+		results, err = executor.ExecuteScripts(cfg.ScriptsFolder)
+	}
+	
 	if err != nil {
 		logger.LogError("script execution failed: %v", err)
 		// Record failed executions

@@ -1,8 +1,19 @@
 github_webhook_secret: your_secret
 addr: :8080
 staging_branch: staging
-scripts_folder: ./scripts
+scripts_folder: ./scripts  # Deprecated: use commands instead
 log_folder: ./logs
+
+# Commands to execute when webhook is triggered
+# Sequential commands run one after another (stops on first failure)
+# Async commands run in parallel after sequential commands complete
+commands:
+  sequential:
+    - "./scripts/deploy.sh"
+    - "echo 'Deployment started'"
+  async:
+    - "./scripts/notify.sh"
+    - "./scripts/cleanup.sh"
 
 database:
   host: localhost

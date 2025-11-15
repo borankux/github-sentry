@@ -20,13 +20,19 @@ type FeishuConfig struct {
 	WebhookSecret string `mapstructure:"webhook_secret"`
 }
 
+type CommandsConfig struct {
+	Sequential []string `mapstructure:"sequential"`
+	Async      []string `mapstructure:"async"`
+}
+
 type Config struct {
 	GitHubWebhookSecret string         `mapstructure:"github_webhook_secret"`
 	Addr                string          `mapstructure:"addr"`
 	StagingBranch       string          `mapstructure:"staging_branch"`
-	ScriptsFolder       string          `mapstructure:"scripts_folder"`
+	ScriptsFolder       string          `mapstructure:"scripts_folder"` // Deprecated: use commands instead
 	LogFolder           string          `mapstructure:"log_folder"`
-	Database            DatabaseConfig  `mapstructure:"database"`
+	Commands            CommandsConfig  `mapstructure:"commands"`
+	Database            DatabaseConfig   `mapstructure:"database"`
 	Feishu              FeishuConfig     `mapstructure:"feishu"`
 }
 
@@ -54,12 +60,15 @@ func LoadConfig() (*Config, error) {
 		return nil, errors.New("staging_branch must be set in config.yml")
 	}
 
-	if cfg.ScriptsFolder == "" {
-		return nil, errors.New("scripts_folder must be set in config.yml")
-	}
-
 	if cfg.LogFolder == "" {
 		return nil, errors.New("log_folder must be set in config.yml")
+	}
+
+	// Validate commands configuration
+	if len(cfg.Commands.Sequential) == 0 && len(cfg.Commands.Async) == 0 {
+		if cfg.ScriptsFolder == "" {
+			return nil, errors.New("either commands.sequential/commands.async or scripts_folder must be set in config.yml")
+		}
 	}
 
 	if cfg.Database.Host == "" {

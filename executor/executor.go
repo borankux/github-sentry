@@ -8,9 +8,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
 
-// ExecutionResult represents the result of executing a script
+// ExecutionResult represents the result of executing a script or command
 type ExecutionResult struct {
 	ScriptName string
 	Success    bool
@@ -18,9 +19,63 @@ type ExecutionResult struct {
 	Error      string
 }
 
+// ExecuteCommands executes commands from config with branch and repo context
+// Sequential commands run one after another, stopping on first failure
+// Async commands run in parallel
+func ExecuteCommands(sequentialCommands, asyncCommands []string, branch, repoName string) ([]ExecutionResult, error) {
+	results := make([]ExecutionResult, 0)
+	
+	// Set up environment variables for scripts
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GITHUB_BRANCH=%s", branch))
+	env = append(env, fmt.Sprintf("GITHUB_REPO=%s", repoName))
+	env = append(env, fmt.Sprintf("GITHUB_REPOSITORY=%s", repoName))
+	
+	// Execute sequential commands first (stop on failure)
+	for _, cmd := range sequentialCommands {
+		if cmd == "" {
+			continue
+		}
+		result := executeCommand(cmd, env)
+		results = append(results, result)
+		
+		if !result.Success {
+			// Stop on first failure
+			return results, fmt.Errorf("command failed: %s - %s", result.ScriptName, result.Error)
+		}
+	}
+	
+	// Execute async commands in parallel
+	if len(asyncCommands) > 0 {
+		var wg sync.WaitGroup
+		asyncResults := make([]ExecutionResult, 0)
+		mu := sync.Mutex{}
+		
+		for _, cmd := range asyncCommands {
+			if cmd == "" {
+				continue
+			}
+			wg.Add(1)
+			go func(command string) {
+				defer wg.Done()
+				result := executeCommand(command, env)
+				mu.Lock()
+				asyncResults = append(asyncResults, result)
+				mu.Unlock()
+			}(cmd)
+		}
+		
+		wg.Wait()
+		results = append(results, asyncResults...)
+	}
+	
+	return results, nil
+}
+
 // ExecuteScripts executes scripts from the specified folder sequentially
 // Scripts are expected to be named like 001.sh, 002.sh, etc.
 // Stops on first failure
+// Deprecated: Use ExecuteCommands instead
 func ExecuteScripts(scriptsFolder string) ([]ExecutionResult, error) {
 	scripts, err := GetScripts(scriptsFolder)
 	if err != nil {
@@ -86,7 +141,41 @@ func GetScripts(scriptsFolder string) ([]string, error) {
 	return scripts, nil
 }
 
+// executeCommand executes a single command with environment variables
+func executeCommand(command string, env []string) ExecutionResult {
+	// Parse command - support both shell commands and script paths
+	var cmd *exec.Cmd
+	if strings.HasSuffix(command, ".sh") || strings.HasPrefix(command, "./") || strings.HasPrefix(command, "/") {
+		// It's a script file
+		cmd = exec.Command("bash", command)
+	} else {
+		// It's a shell command
+		cmd = exec.Command("bash", "-c", command)
+	}
+	
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+
+	result := ExecutionResult{
+		ScriptName: command,
+		Output:     string(output),
+	}
+
+	if err != nil {
+		result.Success = false
+		result.Error = err.Error()
+		if result.Output == "" {
+			result.Output = err.Error()
+		}
+	} else {
+		result.Success = true
+	}
+
+	return result
+}
+
 // executeScript executes a single script
+// Deprecated: Use executeCommand instead
 func executeScript(scriptPath string) ExecutionResult {
 	scriptName := filepath.Base(scriptPath)
 
