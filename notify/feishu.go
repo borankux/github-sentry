@@ -27,14 +27,23 @@ func signFeishuRequest(timestamp int64, secret string) (string, error) {
 	return signature, nil
 }
 
+// NotificationStatus represents the status of the notification
+type NotificationStatus string
+
+const (
+	StatusStarted NotificationStatus = "started"
+	StatusSuccess NotificationStatus = "success"
+	StatusFailure NotificationStatus = "failure"
+)
+
 // Notify sends a Feishu card notification with commit information
 func Notify(webhookURL string, commitID, commitMessage, branch string, commitTime time.Time) error {
-	return NotifyWithSecret(webhookURL, "", commitID, commitMessage, branch, commitTime)
+	return NotifyWithSecret(webhookURL, "", StatusSuccess, "", "", commitID, commitMessage, branch, commitTime)
 }
 
 // NotifyWithSecret sends a Feishu card notification with optional signature
-func NotifyWithSecret(webhookURL, webhookSecret string, commitID, commitMessage, branch string, commitTime time.Time) error {
-	card := buildCard(commitID, commitMessage, branch, commitTime)
+func NotifyWithSecret(webhookURL, webhookSecret string, status NotificationStatus, repoName, author, commitID, commitMessage, branch string, commitTime time.Time) error {
+	card := buildCard(status, repoName, author, commitID, commitMessage, branch, commitTime)
 
 	var payload map[string]interface{}
 
@@ -105,9 +114,75 @@ func NotifyWithSecret(webhookURL, webhookSecret string, commitID, commitMessage,
 	return nil
 }
 
-// buildCard creates a Feishu card message
+// buildCard creates a Feishu card message with status-based colors and emojis
 // Returns just the card object (without msg_type wrapper)
-func buildCard(commitID, commitMessage, branch string, commitTime time.Time) map[string]interface{} {
+func buildCard(status NotificationStatus, repoName, author, commitID, commitMessage, branch string, commitTime time.Time) map[string]interface{} {
+	// Set default values
+	if repoName == "" {
+		repoName = "unknown/repo"
+	}
+	if author == "" {
+		author = "unknown"
+	}
+
+	// Determine emoji, color, and status text based on status
+	var emoji, template, statusText string
+	switch status {
+	case StatusStarted:
+		emoji = "🚀"
+		template = "blue"
+		statusText = "Workflow Started"
+	case StatusSuccess:
+		emoji = "✅"
+		template = "green"
+		statusText = "Success"
+	case StatusFailure:
+		emoji = "🚨"
+		template = "red"
+		statusText = "Failure"
+	default:
+		emoji = "ℹ️"
+		template = "blue"
+		statusText = "Notification"
+	}
+
+	// Build title with emoji and repo name
+	title := fmt.Sprintf("%s %s", emoji, repoName)
+	if branch != "" {
+		title = fmt.Sprintf("%s %s - %s", emoji, repoName, branch)
+	}
+
+	// Build elements
+	elements := []map[string]interface{}{
+		{
+			"tag": "div",
+			"text": map[string]interface{}{
+				"tag":     "lark_md",
+				"content": fmt.Sprintf("**Status:** %s\n**Author:** %s\n**Branch:** %s", statusText, author, branch),
+			},
+		},
+		{
+			"tag": "hr",
+		},
+		{
+			"tag": "div",
+			"text": map[string]interface{}{
+				"tag":     "lark_md",
+				"content": fmt.Sprintf("**Commit ID:** `%s`\n**Time:** %s", commitID, commitTime.Format("2006-01-02 15:04:05")),
+			},
+		},
+		{
+			"tag": "hr",
+		},
+		{
+			"tag": "div",
+			"text": map[string]interface{}{
+				"tag":     "lark_md",
+				"content": fmt.Sprintf("**Commit Message:**\n%s", commitMessage),
+			},
+		},
+	}
+
 	// Feishu card format - just the card object
 	card := map[string]interface{}{
 		"config": map[string]interface{}{
@@ -115,31 +190,13 @@ func buildCard(commitID, commitMessage, branch string, commitTime time.Time) map
 			"enable_forward":   true,
 		},
 		"header": map[string]interface{}{
-			"template": "blue",
+			"template": template,
 			"title": map[string]interface{}{
 				"tag":     "plain_text",
-				"content": fmt.Sprintf("GitHub Webhook Notification - %s", branch),
+				"content": title,
 			},
 		},
-		"elements": []map[string]interface{}{
-			{
-				"tag": "div",
-				"text": map[string]interface{}{
-					"tag":     "lark_md",
-					"content": fmt.Sprintf("**Branch:** %s\n**Commit ID:** `%s`\n**Time:** %s", branch, commitID, commitTime.Format("2006-01-02 15:04:05")),
-				},
-			},
-			{
-				"tag": "hr",
-			},
-			{
-				"tag": "div",
-				"text": map[string]interface{}{
-					"tag":     "lark_md",
-					"content": fmt.Sprintf("**Commit Message:**\n%s", commitMessage),
-				},
-			},
-		},
+		"elements": elements,
 	}
 
 	return card

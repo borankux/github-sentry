@@ -55,10 +55,13 @@ configured in config.yml. This command does not require database connection.`,
 		fmt.Printf("  Branch: %s\n", testBranch)
 		fmt.Println()
 
-		// Send notification
+		// Send notification (default to success status for testing)
 		err = notify.NotifyWithSecret(
 			cfg.Feishu.WebhookURL,
 			cfg.Feishu.WebhookSecret,
+			notify.StatusSuccess,
+			"test/repo",
+			"test-user",
 			testCommitID,
 			testCommitMessage,
 			testBranch,

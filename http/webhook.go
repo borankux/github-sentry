@@ -75,21 +75,29 @@ func WebHook(c *gin.Context) {
 
 	logger.LogTrigger(commitID, commitMessage, branch)
 
-	// Send "started" notification immediately
+	// Extract repo name and author
 	repoName := pushEvent.GetRepo().GetFullName()
-	actor := pushEvent.GetPusher().GetName()
-	if actor == "" {
-		actor = pushEvent.GetPusher().GetLogin()
-	}
 	if repoName == "" {
 		repoName = "unknown/repo"
 	}
-	if actor == "" {
-		actor = "unknown"
+	
+	// Get commit author (prefer committer, fallback to pusher)
+	author := headCommit.GetAuthor().GetName()
+	if author == "" {
+		author = headCommit.GetAuthor().GetLogin()
+	}
+	if author == "" {
+		author = pushEvent.GetPusher().GetName()
+	}
+	if author == "" {
+		author = pushEvent.GetPusher().GetLogin()
+	}
+	if author == "" {
+		author = "unknown"
 	}
 	
-	// Send started notification (non-blocking, don't fail if it errors)
-	if notifyErr := notify.NotifyStarted(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, repoName, actor, commitMessage); notifyErr != nil {
+	// Send "started" card notification immediately
+	if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusStarted, repoName, author, commitID, commitMessage, branch, commitTime); notifyErr != nil {
 		logger.LogError("failed to send Feishu started notification: %v", notifyErr)
 		// Continue processing even if notification fails
 	}
@@ -127,7 +135,7 @@ func WebHook(c *gin.Context) {
 		}
 
 		// Send Feishu notification about failure
-		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, commitID, commitMessage+" (FAILED)", branch, commitTime); notifyErr != nil {
+		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusFailure, repoName, author, commitID, commitMessage+" (FAILED)", branch, commitTime); notifyErr != nil {
 			logger.LogError("failed to send Feishu notification: %v", notifyErr)
 		}
 
@@ -147,8 +155,8 @@ func WebHook(c *gin.Context) {
 		logger.LogExecution(result.ScriptName, result.Success, result.Output, result.Error)
 	}
 
-	// Send Feishu notification
-	if err := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, commitID, commitMessage, branch, commitTime); err != nil {
+	// Send Feishu notification for success
+	if err := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, repoName, author, commitID, commitMessage, branch, commitTime); err != nil {
 		logger.LogError("failed to send Feishu notification: %v", err)
 		// Don't fail the request if notification fails
 	}
