@@ -47,15 +47,17 @@ func runServer() {
 	}
 	defer database.Close()
 
-	router := gin.Default()
-	router.Use(gin.Recovery())
-	router.Use(middleware.InjectMiddleware("config", cfg))
-	router.POST("/github", http.WebHook)
-	router.GET("/health", http.HealthCheck)
+	app := gin.Default()
+	app.Use(gin.Recovery())
+	app.Use(middleware.InjectMiddleware("config", cfg))
+	api := app.Group("/tool/github-sentry")
+
+	api.POST("/webhook", http.WebHook)
+	api.GET("/health", http.HealthCheck)
 
 	logger.LogInfo("starting server on %s", cfg.Addr)
 	log.Printf("listening on %s", cfg.Addr)
-	if err := router.Run(cfg.Addr); err != nil {
+	if err := app.Run(cfg.Addr); err != nil {
 		logger.LogError("server error: %v", err)
 		log.Fatal(err)
 	}
