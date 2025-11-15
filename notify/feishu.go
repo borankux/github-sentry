@@ -168,7 +168,7 @@ func buildCard(status NotificationStatus, repoName, author, commitID, commitMess
 			"tag": "div",
 			"text": map[string]interface{}{
 				"tag":     "lark_md",
-				"content": fmt.Sprintf("**Commit ID:** `%s`\n**Time:** %s", commitID, commitTime.Format("2006-01-02 15:04:05")),
+				"content": fmt.Sprintf("**Commit ID:** `%s`\n**Time:** %s", commitID, time.Now().Format("2006-01-02 15:04:05")),
 			},
 		},
 		{
