@@ -1,0 +1,17 @@
+github_webhook_secret: your_secret
+addr: :8080
+staging_branch: staging
+scripts_folder: ./scripts
+log_folder: ./logs
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: your_password
+  dbname: github_sentry
+  sslmode: disable
+
+feishu:
+  webhook_url: https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook_token
+  webhook_secret: your_webhook_secret
