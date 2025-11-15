@@ -50,8 +50,9 @@ func runServer() {
 	router := gin.Default()
 	router.Use(gin.Recovery())
 	router.Use(middleware.InjectMiddleware("config", cfg))
-	router.POST("/api/webhook/github", http.WebHook)
-	
+	router.POST("/github", http.WebHook)
+	router.GET("/health", http.HealthCheck)
+
 	logger.LogInfo("starting server on %s", cfg.Addr)
 	log.Printf("listening on %s", cfg.Addr)
 	if err := router.Run(cfg.Addr); err != nil {
@@ -59,4 +60,3 @@ func runServer() {
 		log.Fatal(err)
 	}
 }
-
