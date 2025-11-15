@@ -75,6 +75,25 @@ func WebHook(c *gin.Context) {
 
 	logger.LogTrigger(commitID, commitMessage, branch)
 
+	// Send "started" notification immediately
+	repoName := pushEvent.GetRepo().GetFullName()
+	actor := pushEvent.GetPusher().GetName()
+	if actor == "" {
+		actor = pushEvent.GetPusher().GetLogin()
+	}
+	if repoName == "" {
+		repoName = "unknown/repo"
+	}
+	if actor == "" {
+		actor = "unknown"
+	}
+	
+	// Send started notification (non-blocking, don't fail if it errors)
+	if notifyErr := notify.NotifyStarted(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, repoName, actor, commitMessage); notifyErr != nil {
+		logger.LogError("failed to send Feishu started notification: %v", notifyErr)
+		// Continue processing even if notification fails
+	}
+
 	// Record trigger in database
 	triggerID, err := database.RecordTrigger(commitTime, commitID, commitMessage, branch)
 	if err != nil {
