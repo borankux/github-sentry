@@ -119,7 +119,7 @@ func WebHook(c *gin.Context) {
 		// Fallback to old scripts folder method (deprecated)
 		results, err = executor.ExecuteScripts(cfg.ScriptsFolder)
 	}
-	
+
 	if err != nil {
 		logger.LogError("script execution failed: %v", err)
 		// Record failed executions
@@ -134,8 +134,25 @@ func WebHook(c *gin.Context) {
 			logger.LogExecution(result.ScriptName, result.Success, result.Output, result.Error)
 		}
 
-		// Send Feishu notification about failure
-		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusFailure, repoName, author, commitID, commitMessage+" (FAILED)", branch, commitTime); notifyErr != nil {
+		// Build failure message including reason from first failed result (if any)
+		failureMessage := commitMessage + " (FAILED)"
+		for _, result := range results {
+			if !result.Success {
+				const maxOutputLen = 2000
+				output := result.Output
+				if len(output) > maxOutputLen {
+					output = output[:maxOutputLen] + "...(truncated)"
+				}
+				failureMessage = failureMessage + "\n\nFailure Reason:\n" +
+					"Script: " + result.ScriptName + "\n" +
+					"Error: " + result.Error + "\n" +
+					"Output:\n" + output
+				break
+			}
+		}
+
+		// Send Feishu notification about failure (with reason)
+		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusFailure, repoName, author, commitID, failureMessage, branch, commitTime); notifyErr != nil {
 			logger.LogError("failed to send Feishu notification: %v", notifyErr)
 		}
 
