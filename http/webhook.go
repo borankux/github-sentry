@@ -3,6 +3,7 @@ package http
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/allintech/github-sentry/config"
 	"github.com/allintech/github-sentry/database"
@@ -110,8 +111,20 @@ func WebHook(c *gin.Context) {
 		return
 	}
 
+	// Respond to GitHub immediately with success
+	// Script execution will happen asynchronously in the background
+	c.String(http.StatusOK, "webhook received")
+
+	// Launch async processing in background goroutine
+	go processWebhookAsync(cfg, triggerID, commitID, commitMessage, branch, repoName, author, commitTime)
+}
+
+// processWebhookAsync handles script execution, result recording, and notifications asynchronously
+// This function runs in a background goroutine and does not affect the HTTP response
+func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMessage, branch, repoName, author string, commitTime time.Time) {
 	// Execute commands from config
 	var results []executor.ExecutionResult
+	var err error
 	if len(cfg.Commands.Sequential) > 0 || len(cfg.Commands.Async) > 0 {
 		// Use new command-based execution
 		results, err = executor.ExecuteCommands(cfg.Commands.Sequential, cfg.Commands.Async, branch, repoName)
@@ -155,8 +168,6 @@ func WebHook(c *gin.Context) {
 		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusFailure, repoName, author, commitID, failureMessage, branch, commitTime); notifyErr != nil {
 			logger.LogError("failed to send Feishu notification: %v", notifyErr)
 		}
-
-		c.String(http.StatusInternalServerError, "script execution failed")
 		return
 	}
 
@@ -175,9 +186,7 @@ func WebHook(c *gin.Context) {
 	// Send Feishu notification for success
 	if err := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, repoName, author, commitID, commitMessage, branch, commitTime); err != nil {
 		logger.LogError("failed to send Feishu notification: %v", err)
-		// Don't fail the request if notification fails
 	}
 
 	logger.LogInfo("webhook processed successfully for commit %s", commitID)
-	c.String(http.StatusOK, "webhook processed successfully")
 }
