@@ -26,14 +26,14 @@ type CommandsConfig struct {
 }
 
 type Config struct {
-	GitHubWebhookSecret string         `mapstructure:"github_webhook_secret"`
-	Addr                string          `mapstructure:"addr"`
-	StagingBranch       string          `mapstructure:"staging_branch"`
-	ScriptsFolder       string          `mapstructure:"scripts_folder"` // Deprecated: use commands instead
-	LogFolder           string          `mapstructure:"log_folder"`
-	Commands            CommandsConfig  `mapstructure:"commands"`
-	Database            DatabaseConfig   `mapstructure:"database"`
-	Feishu              FeishuConfig     `mapstructure:"feishu"`
+	GitHubWebhookSecret string                    `mapstructure:"github_webhook_secret"`
+	Addr                string                     `mapstructure:"addr"`
+	StagingBranch       string                     `mapstructure:"staging_branch"`
+	ScriptsFolder       string                     `mapstructure:"scripts_folder"` // Deprecated: use commands instead
+	LogFolder           string                     `mapstructure:"log_folder"`
+	Commands            map[string]CommandsConfig  `mapstructure:"commands"`
+	Database            DatabaseConfig              `mapstructure:"database"`
+	Feishu              FeishuConfig                `mapstructure:"feishu"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -52,6 +52,20 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// Handle backward compatibility: check if old flat structure exists
+	// If commands.sequential or commands.async exist directly, convert to map format
+	if cfg.Commands == nil || len(cfg.Commands) == 0 {
+		if v.IsSet("commands.sequential") || v.IsSet("commands.async") {
+			// Old format detected - unmarshal into temporary CommandsConfig
+			var oldCommands CommandsConfig
+			if err := v.UnmarshalKey("commands", &oldCommands); err == nil {
+				// Convert to map format with a default key (empty string means "all projects")
+				cfg.Commands = make(map[string]CommandsConfig)
+				cfg.Commands[""] = oldCommands
+			}
+		}
+	}
+
 	if cfg.GitHubWebhookSecret == "" {
 		return nil, errors.New("github_webhook_secret must be set in config.yml")
 	}
@@ -65,10 +79,18 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Validate commands configuration
-	if len(cfg.Commands.Sequential) == 0 && len(cfg.Commands.Async) == 0 {
-		if cfg.ScriptsFolder == "" {
-			return nil, errors.New("either commands.sequential/commands.async or scripts_folder must be set in config.yml")
+	// Check if any project has commands configured
+	hasCommands := false
+	if cfg.Commands != nil {
+		for _, projectCommands := range cfg.Commands {
+			if len(projectCommands.Sequential) > 0 || len(projectCommands.Async) > 0 {
+				hasCommands = true
+				break
+			}
 		}
+	}
+	if !hasCommands && cfg.ScriptsFolder == "" {
+		return nil, errors.New("either commands with project-specific configuration or scripts_folder must be set in config.yml")
 	}
 
 	if cfg.Database.Host == "" {

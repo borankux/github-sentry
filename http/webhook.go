@@ -122,12 +122,27 @@ func WebHook(c *gin.Context) {
 // processWebhookAsync handles script execution, result recording, and notifications asynchronously
 // This function runs in a background goroutine and does not affect the HTTP response
 func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMessage, branch, repoName, author string, commitTime time.Time) {
+	// Look up commands for this specific project
+	projectCommands, exists := cfg.Commands[repoName]
+	// Backward compatibility: check for empty string key (old flat format)
+	if !exists {
+		projectCommands, exists = cfg.Commands[""]
+	}
+	if !exists {
+		logger.LogInfo("no commands configured for project %s, skipping execution", repoName)
+		// Send Feishu notification about skipped execution
+		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, repoName, author, commitID, commitMessage+" (skipped - no commands configured)", branch, commitTime); notifyErr != nil {
+			logger.LogError("failed to send Feishu notification: %v", notifyErr)
+		}
+		return
+	}
+
 	// Execute commands from config
 	var results []executor.ExecutionResult
 	var err error
-	if len(cfg.Commands.Sequential) > 0 || len(cfg.Commands.Async) > 0 {
+	if len(projectCommands.Sequential) > 0 || len(projectCommands.Async) > 0 {
 		// Use new command-based execution
-		results, err = executor.ExecuteCommands(cfg.Commands.Sequential, cfg.Commands.Async, branch, repoName)
+		results, err = executor.ExecuteCommands(projectCommands.Sequential, projectCommands.Async, branch, repoName)
 	} else {
 		// Fallback to old scripts folder method (deprecated)
 		results, err = executor.ExecuteScripts(cfg.ScriptsFolder)
