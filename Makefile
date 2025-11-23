@@ -42,10 +42,12 @@ clean:
 	@rm -f $(BINARY).exe
 	@echo "Clean complete"
 
-# Run tests
+# Test webhook endpoint
+# Usage: make test
+# Or with custom secret: WEBHOOK_SECRET=your_actual_secret make test
 test:
-	@echo "Running tests..."
-	$(GOTEST) -v ./...
+	@echo "Testing webhook endpoint..."
+	@./test-webhook.sh
 
 # Download dependencies
 deps:
@@ -142,7 +144,7 @@ help:
 	@echo "  make build          - Build the application"
 	@echo "  make rebuild        - Clean and rebuild the application"
 	@echo "  make clean          - Remove build artifacts"
-	@echo "  make test           - Run tests"
+	@echo "  make test           - Test webhook endpoint with POST request"
 	@echo "  make deps           - Download and tidy dependencies"
 	@echo "  make run            - Run application in foreground"
 	@echo "  make run-background - Run application in background with nohup (logs to $(LOG_FILE))"
