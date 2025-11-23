@@ -138,6 +138,9 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 	}
 
 	// Execute commands from config
+	logger.LogInfo("Starting command execution for commit %s", commitID)
+	executionStartTime := time.Now()
+	
 	var results []executor.ExecutionResult
 	var err error
 	if len(projectCommands.Sequential) > 0 || len(projectCommands.Async) > 0 {
@@ -146,6 +149,38 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 	} else {
 		// Fallback to old scripts folder method (deprecated)
 		results, err = executor.ExecuteScripts(cfg.ScriptsFolder)
+	}
+	
+	// Calculate execution completion time and duration
+	var executionEndTime time.Time
+	var totalDuration time.Duration
+	if len(results) > 0 {
+		// Find the latest end time from all results (for async commands, this is the last one to finish)
+		executionEndTime = results[0].EndTime
+		for _, result := range results[1:] {
+			if result.EndTime.After(executionEndTime) {
+				executionEndTime = result.EndTime
+			}
+		}
+		totalDuration = executionEndTime.Sub(executionStartTime)
+	} else {
+		executionEndTime = time.Now()
+		totalDuration = executionEndTime.Sub(executionStartTime)
+	}
+	
+	// Verify all results have completion times
+	allCompleted := true
+	for _, result := range results {
+		if result.EndTime.IsZero() {
+			logger.LogError("Execution result for %s has no end time", result.ScriptName)
+			allCompleted = false
+		}
+	}
+	
+	// Log execution completion with timing
+	logger.LogInfo("Execution completed at %s (duration: %v)", executionEndTime.Format("2006-01-02 15:04:05.000000"), totalDuration)
+	if !allCompleted {
+		logger.LogError("Warning: Some execution results are missing completion times")
 	}
 
 	if err != nil {
@@ -159,7 +194,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 			if dbErr := database.RecordExecution(triggerID, result.ScriptName, status, result.Output, result.Error); dbErr != nil {
 				logger.LogError("failed to record execution: %v", dbErr)
 			}
-			logger.LogExecution(result.ScriptName, result.Success, result.Output, result.Error)
+			logger.LogExecutionWithTiming(result.ScriptName, result.Success, result.Output, result.Error, result.StartTime, result.EndTime, result.Duration)
 		}
 
 		// Build failure message including reason from first failed result (if any)
@@ -180,8 +215,15 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 		}
 
 		// Send Feishu notification about failure (with reason)
+		// This is sent synchronously (blocking) immediately after execution completion is verified
+		notificationStartTime := time.Now()
+		logger.LogInfo("Sending failure notification at %s", notificationStartTime.Format("2006-01-02 15:04:05.000000"))
 		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusFailure, repoName, author, commitID, failureMessage, branch, commitTime); notifyErr != nil {
 			logger.LogError("failed to send Feishu notification: %v", notifyErr)
+		} else {
+			notificationEndTime := time.Now()
+			notificationDuration := notificationEndTime.Sub(notificationStartTime)
+			logger.LogInfo("Notification sent at %s (duration: %v)", notificationEndTime.Format("2006-01-02 15:04:05.000000"), notificationDuration)
 		}
 		return
 	}
@@ -195,12 +237,19 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 		if dbErr := database.RecordExecution(triggerID, result.ScriptName, status, result.Output, result.Error); dbErr != nil {
 			logger.LogError("failed to record execution: %v", dbErr)
 		}
-		logger.LogExecution(result.ScriptName, result.Success, result.Output, result.Error)
+		logger.LogExecutionWithTiming(result.ScriptName, result.Success, result.Output, result.Error, result.StartTime, result.EndTime, result.Duration)
 	}
 
 	// Send Feishu notification for success
+	// This is sent synchronously (blocking) immediately after execution completion is verified
+	notificationStartTime := time.Now()
+	logger.LogInfo("Sending success notification at %s", notificationStartTime.Format("2006-01-02 15:04:05.000000"))
 	if err := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, repoName, author, commitID, commitMessage, branch, commitTime); err != nil {
 		logger.LogError("failed to send Feishu notification: %v", err)
+	} else {
+		notificationEndTime := time.Now()
+		notificationDuration := notificationEndTime.Sub(notificationStartTime)
+		logger.LogInfo("Notification sent at %s (duration: %v)", notificationEndTime.Format("2006-01-02 15:04:05.000000"), notificationDuration)
 	}
 
 	logger.LogInfo("webhook processed successfully for commit %s", commitID)

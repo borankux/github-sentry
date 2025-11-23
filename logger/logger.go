@@ -64,6 +64,21 @@ func LogExecution(scriptName string, success bool, output, errorMsg string) {
 	}
 }
 
+// LogExecutionTiming logs execution timing information
+func LogExecutionTiming(scriptName string, startTime, endTime time.Time, duration time.Duration) {
+	Log("EXECUTION_TIMING: script=%s start=%s end=%s duration=%v", 
+		scriptName, 
+		startTime.Format("2006-01-02 15:04:05.000000"), 
+		endTime.Format("2006-01-02 15:04:05.000000"), 
+		duration)
+}
+
+// LogExecutionWithTiming logs a script execution with timing information
+func LogExecutionWithTiming(scriptName string, success bool, output, errorMsg string, startTime, endTime time.Time, duration time.Duration) {
+	LogExecution(scriptName, success, output, errorMsg)
+	LogExecutionTiming(scriptName, startTime, endTime, duration)
+}
+
 // LogError logs an error
 func LogError(format string, v ...interface{}) {
 	Log("ERROR: "+format, v...)

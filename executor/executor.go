@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ExecutionResult represents the result of executing a script or command
@@ -17,6 +18,9 @@ type ExecutionResult struct {
 	Success    bool
 	Output     string
 	Error      string
+	StartTime  time.Time
+	EndTime    time.Time
+	Duration   time.Duration
 }
 
 // ExecuteCommands executes commands from config with branch and repo context
@@ -65,9 +69,18 @@ func ExecuteCommands(sequentialCommands, asyncCommands []string, branch, repoNam
 			}(cmd)
 		}
 		
+		// Wait for all async commands to complete
+		// This blocks until the last command finishes - ensuring all commands have completed
+		// Each command's EndTime is recorded when it finishes, so we can determine
+		// the true completion time from the results
 		wg.Wait()
+		
 		results = append(results, asyncResults...)
 	}
+	
+	// All commands have completed at this point
+	// Individual results contain their StartTime, EndTime, and Duration
+	// Overall execution timing is calculated in the webhook handler from these results
 	
 	return results, nil
 }
@@ -143,6 +156,9 @@ func GetScripts(scriptsFolder string) ([]string, error) {
 
 // executeCommand executes a single command with environment variables
 func executeCommand(command string, env []string) ExecutionResult {
+	// Record start time before executing the command
+	startTime := time.Now()
+	
 	// Parse command - support both shell commands and script paths
 	var cmd *exec.Cmd
 	if strings.HasSuffix(command, ".sh") || strings.HasPrefix(command, "./") || strings.HasPrefix(command, "/") {
@@ -155,10 +171,17 @@ func executeCommand(command string, env []string) ExecutionResult {
 	
 	cmd.Env = env
 	output, err := cmd.CombinedOutput()
+	
+	// Record end time immediately after command completes
+	endTime := time.Now()
+	duration := endTime.Sub(startTime)
 
 	result := ExecutionResult{
 		ScriptName: command,
 		Output:     string(output),
+		StartTime:  startTime,
+		EndTime:    endTime,
+		Duration:   duration,
 	}
 
 	if err != nil {
@@ -179,12 +202,22 @@ func executeCommand(command string, env []string) ExecutionResult {
 func executeScript(scriptPath string) ExecutionResult {
 	scriptName := filepath.Base(scriptPath)
 
+	// Record start time before executing the script
+	startTime := time.Now()
+	
 	cmd := exec.Command("bash", scriptPath)
 	output, err := cmd.CombinedOutput()
+	
+	// Record end time immediately after script completes
+	endTime := time.Now()
+	duration := endTime.Sub(startTime)
 
 	result := ExecutionResult{
 		ScriptName: scriptName,
 		Output:     string(output),
+		StartTime:  startTime,
+		EndTime:    endTime,
+		Duration:   duration,
 	}
 
 	if err != nil {
