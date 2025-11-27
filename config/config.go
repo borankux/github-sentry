@@ -21,8 +21,10 @@ type FeishuConfig struct {
 }
 
 type CommandsConfig struct {
-	Sequential []string `mapstructure:"sequential"`
-	Async      []string `mapstructure:"async"`
+	Organization string   `mapstructure:"organization"`
+	Repo         string   `mapstructure:"repo"`
+	Sequential   []string `mapstructure:"sequential"`
+	Async        []string `mapstructure:"async"`
 }
 
 type Config struct {
@@ -52,20 +54,6 @@ func LoadConfig() (*Config, error) {
 		return nil, err
 	}
 
-	// Handle backward compatibility: check if old flat structure exists
-	// If commands.sequential or commands.async exist directly, convert to map format
-	if cfg.Commands == nil || len(cfg.Commands) == 0 {
-		if v.IsSet("commands.sequential") || v.IsSet("commands.async") {
-			// Old format detected - unmarshal into temporary CommandsConfig
-			var oldCommands CommandsConfig
-			if err := v.UnmarshalKey("commands", &oldCommands); err == nil {
-				// Convert to map format with a default key (empty string means "all projects")
-				cfg.Commands = make(map[string]CommandsConfig)
-				cfg.Commands[""] = oldCommands
-			}
-		}
-	}
-
 	if cfg.GitHubWebhookSecret == "" {
 		return nil, errors.New("github_webhook_secret must be set in config.yml")
 	}
@@ -79,13 +67,18 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// Validate commands configuration
-	// Check if any project has commands configured
+	// Check if any project has commands configured and validate organization/repo fields
 	hasCommands := false
 	if cfg.Commands != nil {
-		for _, projectCommands := range cfg.Commands {
+		for projectName, projectCommands := range cfg.Commands {
+			if projectCommands.Organization == "" {
+				return nil, errors.New("commands." + projectName + ".organization must be set in config.yml")
+			}
+			if projectCommands.Repo == "" {
+				return nil, errors.New("commands." + projectName + ".repo must be set in config.yml")
+			}
 			if len(projectCommands.Sequential) > 0 || len(projectCommands.Async) > 0 {
 				hasCommands = true
-				break
 			}
 		}
 	}

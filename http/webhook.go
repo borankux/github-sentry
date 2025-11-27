@@ -76,10 +76,23 @@ func WebHook(c *gin.Context) {
 
 	logger.LogTrigger(commitID, commitMessage, branch)
 
-	// Extract repo name and author
-	repoName := pushEvent.GetRepo().GetFullName()
-	if repoName == "" {
-		repoName = "unknown/repo"
+	// Extract repo information
+	repo := pushEvent.GetRepo()
+	orgName := ""
+	repoName := ""
+	if repo != nil {
+		if owner := repo.GetOwner(); owner != nil {
+			orgName = owner.GetLogin()
+		}
+		repoName = repo.GetName()
+	}
+	
+	// Build full repo name for display/logging purposes
+	fullRepoName := orgName + "/" + repoName
+	if fullRepoName == "/" {
+		fullRepoName = "unknown/repo"
+		orgName = "unknown"
+		repoName = "repo"
 	}
 	
 	// Get commit author (prefer committer, fallback to pusher)
@@ -98,7 +111,7 @@ func WebHook(c *gin.Context) {
 	}
 	
 	// Send "started" card notification immediately
-	if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusStarted, repoName, author, commitID, commitMessage, branch, commitTime); notifyErr != nil {
+	if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusStarted, fullRepoName, author, commitID, commitMessage, branch, commitTime); notifyErr != nil {
 		logger.LogError("failed to send Feishu started notification: %v", notifyErr)
 		// Continue processing even if notification fails
 	}
@@ -116,26 +129,38 @@ func WebHook(c *gin.Context) {
 	c.String(http.StatusOK, "webhook received")
 
 	// Launch async processing in background goroutine
-	go processWebhookAsync(cfg, triggerID, commitID, commitMessage, branch, repoName, author, commitTime)
+	go processWebhookAsync(cfg, triggerID, commitID, commitMessage, branch, fullRepoName, orgName, repoName, author, commitTime)
 }
 
 // processWebhookAsync handles script execution, result recording, and notifications asynchronously
 // This function runs in a background goroutine and does not affect the HTTP response
-func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMessage, branch, repoName, author string, commitTime time.Time) {
-	// Look up commands for this specific project
-	projectCommands, exists := cfg.Commands[repoName]
-	// Backward compatibility: check for empty string key (old flat format)
-	if !exists {
-		projectCommands, exists = cfg.Commands[""]
+func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMessage, branch, fullRepoName, orgName, repoName, author string, commitTime time.Time) {
+	// Look up commands for this specific project by matching organization and repo
+	var projectCommands config.CommandsConfig
+	var projectName string
+	found := false
+	
+	if cfg.Commands != nil {
+		for name, commands := range cfg.Commands {
+			if commands.Organization == orgName && commands.Repo == repoName {
+				projectCommands = commands
+				projectName = name
+				found = true
+				break
+			}
+		}
 	}
-	if !exists {
-		logger.LogInfo("no commands configured for project %s, skipping execution", repoName)
+	
+	if !found {
+		logger.LogInfo("no commands configured for project %s (org: %s, repo: %s), skipping execution", fullRepoName, orgName, repoName)
 		// Send Feishu notification about skipped execution
-		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, repoName, author, commitID, commitMessage+" (skipped - no commands configured)", branch, commitTime); notifyErr != nil {
+		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, fullRepoName, author, commitID, commitMessage+" (skipped - no commands configured)", branch, commitTime); notifyErr != nil {
 			logger.LogError("failed to send Feishu notification: %v", notifyErr)
 		}
 		return
 	}
+	
+	logger.LogInfo("matched project %s for org=%s, repo=%s", projectName, orgName, repoName)
 
 	// Execute commands from config
 	logger.LogInfo("Starting command execution for commit %s", commitID)
@@ -145,7 +170,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 	var err error
 	if len(projectCommands.Sequential) > 0 || len(projectCommands.Async) > 0 {
 		// Use new command-based execution
-		results, err = executor.ExecuteCommands(projectCommands.Sequential, projectCommands.Async, branch, repoName)
+		results, err = executor.ExecuteCommands(projectCommands.Sequential, projectCommands.Async, branch, fullRepoName)
 	} else {
 		// Fallback to old scripts folder method (deprecated)
 		results, err = executor.ExecuteScripts(cfg.ScriptsFolder)
@@ -218,7 +243,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 		// This is sent synchronously (blocking) immediately after execution completion is verified
 		notificationStartTime := time.Now()
 		logger.LogInfo("Sending failure notification at %s", notificationStartTime.Format("2006-01-02 15:04:05.000000"))
-		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusFailure, repoName, author, commitID, failureMessage, branch, commitTime); notifyErr != nil {
+		if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusFailure, fullRepoName, author, commitID, failureMessage, branch, commitTime); notifyErr != nil {
 			logger.LogError("failed to send Feishu notification: %v", notifyErr)
 		} else {
 			notificationEndTime := time.Now()
@@ -244,7 +269,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 	// This is sent synchronously (blocking) immediately after execution completion is verified
 	notificationStartTime := time.Now()
 	logger.LogInfo("Sending success notification at %s", notificationStartTime.Format("2006-01-02 15:04:05.000000"))
-	if err := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, repoName, author, commitID, commitMessage, branch, commitTime); err != nil {
+	if err := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusSuccess, fullRepoName, author, commitID, commitMessage, branch, commitTime); err != nil {
 		logger.LogError("failed to send Feishu notification: %v", err)
 	} else {
 		notificationEndTime := time.Now()
