@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-github/v62/github"
 )
+
+// stripANSI removes ANSI color codes and escape sequences from text
+// ANSI escape sequences typically match patterns like \x1b[0m, \033[0;32m, etc.
+// This regex matches ESC[ followed by numbers/semicolons and ending with 'm'
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func stripANSI(text string) string {
+	return ansiRegex.ReplaceAllString(text, "")
+}
 
 func WebHook(c *gin.Context) {
 	// Get config from gin context
@@ -86,7 +96,7 @@ func WebHook(c *gin.Context) {
 		}
 		repoName = repo.GetName()
 	}
-	
+
 	// Build full repo name for display/logging purposes
 	fullRepoName := orgName + "/" + repoName
 	if fullRepoName == "/" {
@@ -94,7 +104,7 @@ func WebHook(c *gin.Context) {
 		orgName = "unknown"
 		repoName = "repo"
 	}
-	
+
 	// Get commit author (prefer committer, fallback to pusher)
 	author := headCommit.GetAuthor().GetName()
 	if author == "" {
@@ -109,7 +119,7 @@ func WebHook(c *gin.Context) {
 	if author == "" {
 		author = "unknown"
 	}
-	
+
 	// Send "started" card notification immediately
 	if notifyErr := notify.NotifyWithSecret(cfg.Feishu.WebhookURL, cfg.Feishu.WebhookSecret, notify.StatusStarted, fullRepoName, author, commitID, commitMessage, branch, commitTime); notifyErr != nil {
 		logger.LogError("failed to send Feishu started notification: %v", notifyErr)
@@ -139,7 +149,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 	var projectCommands config.CommandsConfig
 	var projectName string
 	found := false
-	
+
 	if cfg.Commands != nil {
 		for name, commands := range cfg.Commands {
 			if commands.Organization == orgName && commands.Repo == repoName {
@@ -150,7 +160,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 			}
 		}
 	}
-	
+
 	if !found {
 		logger.LogInfo("no commands configured for project %s (org: %s, repo: %s), skipping execution", fullRepoName, orgName, repoName)
 		// Send Feishu notification about skipped execution
@@ -159,13 +169,13 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 		}
 		return
 	}
-	
+
 	logger.LogInfo("matched project %s for org=%s, repo=%s", projectName, orgName, repoName)
 
 	// Execute commands from config
 	logger.LogInfo("Starting command execution for commit %s", commitID)
 	executionStartTime := time.Now()
-	
+
 	var results []executor.ExecutionResult
 	var err error
 	if len(projectCommands.Sequential) > 0 || len(projectCommands.Async) > 0 {
@@ -175,7 +185,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 		// Fallback to old scripts folder method (deprecated)
 		results, err = executor.ExecuteScripts(cfg.ScriptsFolder)
 	}
-	
+
 	// Calculate execution completion time and duration
 	var executionEndTime time.Time
 	var totalDuration time.Duration
@@ -192,7 +202,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 		executionEndTime = time.Now()
 		totalDuration = executionEndTime.Sub(executionStartTime)
 	}
-	
+
 	// Verify all results have completion times
 	allCompleted := true
 	for _, result := range results {
@@ -201,7 +211,7 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 			allCompleted = false
 		}
 	}
-	
+
 	// Log execution completion with timing
 	logger.LogInfo("Execution completed at %s (duration: %v)", executionEndTime.Format("2006-01-02 15:04:05.000000"), totalDuration)
 	if !allCompleted {
@@ -227,13 +237,14 @@ func processWebhookAsync(cfg *config.Config, triggerID int64, commitID, commitMe
 		for _, result := range results {
 			if !result.Success {
 				const maxOutputLen = 2000
-				output := result.Output
+				output := stripANSI(result.Output)
 				if len(output) > maxOutputLen {
 					output = output[:maxOutputLen] + "...(truncated)"
 				}
+				errorMsg := stripANSI(result.Error)
 				failureMessage = failureMessage + "\n\nFailure Reason:\n" +
 					"Script: " + result.ScriptName + "\n" +
-					"Error: " + result.Error + "\n" +
+					"Error: " + errorMsg + "\n" +
 					"Output:\n" + output
 				break
 			}
